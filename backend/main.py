@@ -8,11 +8,14 @@ from pathlib import Path
 
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
+from PIL import Image
 
 DATA_DIR = Path("/app/data")
 JOBS_FILE = DATA_DIR / "jobs.json"
 UPLOAD_DIR = DATA_DIR / "uploads"
+THUMB_DIR = DATA_DIR / "thumbs"
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+THUMB_DIR.mkdir(parents=True, exist_ok=True)
 
 WORKERS = int(__import__("os").environ.get("OCR_WORKERS", "1"))
 
@@ -121,6 +124,16 @@ async def upload(file: UploadFile = File(...)):
     filename = f"{job_id}{suffix}"
     path = UPLOAD_DIR / filename
     path.write_bytes(await file.read())
+
+    # 生成缩略图用于前端预览（原图处理完即删，缩略图保留）
+    try:
+        with Image.open(path) as im:
+            im = im.convert("RGB")
+            im.thumbnail((720, 720))
+            im.save(THUMB_DIR / f"{job_id}.jpg", quality=82)
+    except Exception:
+        pass
+
     with _lock:
         _jobs[job_id] = {
             "id": job_id, "name": file.filename or filename,
@@ -144,6 +157,14 @@ def get_job(job_id: str):
     return JSONResponse(job)
 
 
+@app.get("/api/image/{job_id}")
+def get_image(job_id: str):
+    thumb = THUMB_DIR / f"{job_id}.jpg"
+    if not thumb.exists():
+        raise HTTPException(404, "图片不存在")
+    return FileResponse(thumb, media_type="image/jpeg")
+
+
 @app.get("/api/jobs")
 def list_jobs():
     with _lock:
@@ -152,8 +173,8 @@ def list_jobs():
     for j in jobs:
         if j["status"] == "queued":
             j["position"] = _queue_position(j["id"])
-        j.pop("lines", None)
-        j.pop("text", None)
+        j.pop("lines", None)  # 逐行坐标数据量大，列表页不带；单任务接口里仍有
+        j["has_image"] = (THUMB_DIR / f"{j['id']}.jpg").exists()
     return jobs
 
 

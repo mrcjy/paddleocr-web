@@ -31,6 +31,15 @@
           box-shadow: 0 1px 3px rgba(0,0,0,.08); }
   body.dark .card { background: #1c1f24; }
   .card h3 { margin: 0 0 6px; font-size: 15px; word-break: break-all; }
+  .card .body { display: flex; gap: 12px; align-items: flex-start; }
+  .card img.thumb { width: 130px; max-width: 32vw; border-radius: 8px; border: 1px solid rgba(128,128,128,.25);
+                    cursor: zoom-in; flex-shrink: 0; }
+  .card .result { flex: 1; min-width: 0; }
+  .progress { height: 8px; background: #e8eaed; border-radius: 5px; overflow: hidden; margin: 10px 0 2px; }
+  body.dark .progress { background: #2a2e34; }
+  .progress .bar { height: 100%; width: 0; background: #1a73e8; border-radius: 5px; transition: width .8s linear; }
+  .progress .bar.indet { width: 34%; animation: slide 1.1s ease-in-out infinite alternate; }
+  @keyframes slide { from { margin-left: 0; } to { margin-left: 66%; } }
   .meta { font-size: 12px; color: #888; }
   .badge { display: inline-block; padding: 2px 8px; border-radius: 6px; font-size: 12px; margin-left: 6px; }
   .queued { background: #fff3cd; color: #8a6d00; }
@@ -95,14 +104,31 @@ async function send(file) {
 
 async function refresh() {
   const jobs = await (await fetch('/api/jobs')).json();
-  $('#jobs').innerHTML = jobs.map(j => `
-    <div class="card" data-id="${j.id}">
-      <h3>${esc(j.name)} <span class="badge ${j.status}" id="b-${j.id}">${label[j.status]}${j.position?` · 第${j.position}位`:''}</span></h3>
-      <div class="meta">${fmt(j.created_at)}${j.error? ' · '+esc(j.error):''}</div>
-      ${j.status==='done' ? `
+  const now = Date.now()/1000;
+  $('#jobs').innerHTML = jobs.map(j => {
+    let prog = '';
+    if (j.status === 'queued') {
+      const pct = j.position ? Math.max(4, 100 - j.position*12) : 4;
+      prog = `<div class="progress"><div class="bar" style="width:${pct}%"></div></div>
+              <div class="meta">排队中 · 前面还有 ${Math.max(0,(j.position||1)-1)} 个任务</div>`;
+    } else if (j.status === 'processing') {
+      const el = Math.max(0, Math.round(now - (j.started_at||now)));
+      prog = `<div class="progress"><div class="bar indet"></div></div>
+              <div class="meta">识别中 · 已进行 ${el>=60?Math.floor(el/60)+'分'+el%60+'秒':el+'秒'}</div>`;
+    }
+    const err = j.status==='error' ? `<div class="meta" style="color:#c0392b">${esc(j.error||'识别失败')}</div>` : '';
+    const thumb = j.has_image ? `<img class="thumb" src="/api/image/${j.id}" onclick="window.open(this.src)" alt="">` : '';
+    const result = j.status==='done' ? `
         <pre id="t-${j.id}">${esc(j.text ?? '')}</pre>
-        <button class="btn ghost copy" onclick="copyTxt('${j.id}')">复制文本</button>` : ''}
-    </div>`).join('');
+        <button class="btn ghost copy" onclick="copyTxt('${j.id}')">复制文本</button>` : '';
+    return `
+    <div class="card" data-id="${j.id}">
+      <h3>${esc(j.name)} <span class="badge ${j.status}">${label[j.status]}</span></h3>
+      <div class="meta">${fmt(j.created_at)}</div>
+      ${prog}${err}
+      <div class="body">${thumb}<div class="result">${result}</div></div>
+    </div>`;
+  }).join('');
 }
 
 function esc(s){const d=document.createElement('div');d.textContent=s??'';return d.innerHTML;}
@@ -112,10 +138,12 @@ function toggleDark(){document.body.classList.toggle('dark');
 if(localStorage.dark) document.body.classList.add('dark');
 
 refresh();
+let wasActive = true;   // 首次先刷一遍
 const timer = setInterval(async () => {
   const jobs = await (await fetch('/api/jobs')).json();
   const active = jobs.some(j => j.status==='queued' || j.status==='processing');
-  if (active) refresh();           // 有活动任务时整体刷新
+  if (active || wasActive) refresh();   // 有活动任务时刷新；任务全部结束后再补刷一次收尾
+  wasActive = active;
 }, 2000);
 </script>
 </body>
