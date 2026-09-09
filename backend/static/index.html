@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>PaddleOCR 识别</title>
+<style>
+  :root { color-scheme: light dark; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+         background: #f4f6f8; color: #1c1e21; }
+  body.dark { background: #121417; color: #e6e8eb; }
+  header { display: flex; align-items: center; justify-content: space-between;
+           padding: 14px 18px; background: #1a73e8; color: #fff; }
+  header h1 { font-size: 18px; margin: 0; font-weight: 600; }
+  header button { background: rgba(255,255,255,.15); border: 0; color: #fff;
+                  border-radius: 8px; padding: 6px 12px; cursor: pointer; }
+  main { max-width: 860px; margin: 0 auto; padding: 18px 16px 60px; }
+  .drop { border: 2px dashed #9aa4b2; border-radius: 14px; padding: 34px 16px;
+          text-align: center; background: #fff; transition: .15s; }
+  body.dark .drop { background: #1c1f24; }
+  .drop.over { border-color: #1a73e8; background: #eaf2ff; }
+  body.dark .drop.over { background: #17253d; }
+  .btns { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; margin-top: 14px; }
+  .btn { border: 0; border-radius: 10px; padding: 12px 22px; font-size: 15px; cursor: pointer;
+         background: #1a73e8; color: #fff; }
+  .btn.ghost { background: #e8eaed; color: #333; }
+  body.dark .btn.ghost { background: #2a2e34; color: #ddd; }
+  .hint { color: #888; font-size: 12.5px; margin-top: 10px; }
+  .card { background: #fff; border-radius: 12px; padding: 14px 16px; margin-top: 14px;
+          box-shadow: 0 1px 3px rgba(0,0,0,.08); }
+  body.dark .card { background: #1c1f24; }
+  .card h3 { margin: 0 0 6px; font-size: 15px; word-break: break-all; }
+  .meta { font-size: 12px; color: #888; }
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 6px; font-size: 12px; margin-left: 6px; }
+  .queued { background: #fff3cd; color: #8a6d00; }
+  .processing { background: #d6e9ff; color: #1053a0; }
+  .done { background: #d9f2e2; color: #1c7a3d; }
+  .error { background: #fcd9d9; color: #a11c1c; }
+  pre { white-space: pre-wrap; word-break: break-all; background: #f4f6f8; border-radius: 8px;
+        padding: 12px; font-size: 14px; line-height: 1.6; max-height: 340px; overflow: auto; }
+  body.dark pre { background: #121417; }
+  .copy { margin-top: 8px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>📷 PaddleOCR 文字识别</h1>
+  <button onclick="toggleDark()">🌙</button>
+</header>
+<main>
+  <div class="drop" id="drop">
+    <div style="font-size:38px">🖼️</div>
+    <div id="dropText">拖拽图片到这里，或</div>
+    <div class="btns">
+      <button class="btn" onclick="pick(false)">选择图片</button>
+      <button class="btn ghost" onclick="pick(true)">📷 拍照识别</button>
+    </div>
+    <div class="hint">支持 jpg / png / webp / bmp，单张识别</div>
+    <input type="file" id="file" accept="image/*" hidden>
+    <input type="file" id="camera" accept="image/*" capture="environment" hidden>
+  </div>
+  <div id="jobs"></div>
+</main>
+<script>
+const $ = s => document.querySelector(s);
+const fmt = t => new Date((t||0)*1000).toLocaleString();
+const label = {queued:'排队中', processing:'识别中', done:'完成', error:'失败'};
+const pick = cam => (cam ? $('#camera') : $('#file')).click();
+$('#file').onchange = e => send(e.target.files[0]);
+$('#camera').onchange = e => send(e.target.files[0]);
+
+const drop = $('#drop');
+['dragover','dragenter'].forEach(ev => drop.addEventListener(ev, e => {
+  e.preventDefault(); drop.classList.add('over');
+}));
+['dragleave','drop'].forEach(ev => drop.addEventListener(ev, e => {
+  e.preventDefault(); drop.classList.remove('over');
+}));
+drop.addEventListener('drop', e => send(e.dataTransfer.files[0]));
+
+async function send(file) {
+  if (!file) return;
+  $('#dropText').textContent = '上传中: ' + file.name;
+  const fd = new FormData();
+  fd.append('file', file);
+  try {
+    await fetch('/api/upload', {method:'POST', body: fd});
+    refresh();
+  } finally {
+    $('#dropText').textContent = '拖拽图片到这里，或';
+    $('#file').value = ''; $('#camera').value = '';
+  }
+}
+
+async function refresh() {
+  const jobs = await (await fetch('/api/jobs')).json();
+  $('#jobs').innerHTML = jobs.map(j => `
+    <div class="card" data-id="${j.id}">
+      <h3>${esc(j.name)} <span class="badge ${j.status}" id="b-${j.id}">${label[j.status]}${j.position?` · 第${j.position}位`:''}</span></h3>
+      <div class="meta">${fmt(j.created_at)}${j.error? ' · '+esc(j.error):''}</div>
+      ${j.status==='done' ? `
+        <pre id="t-${j.id}">${esc(j.text ?? '')}</pre>
+        <button class="btn ghost copy" onclick="copyTxt('${j.id}')">复制文本</button>` : ''}
+    </div>`).join('');
+}
+
+function esc(s){const d=document.createElement('div');d.textContent=s??'';return d.innerHTML;}
+function copyTxt(id){navigator.clipboard.writeText($('#t-'+id).textContent);}
+function toggleDark(){document.body.classList.toggle('dark');
+  localStorage.dark=document.body.classList.contains('dark');}
+if(localStorage.dark) document.body.classList.add('dark');
+
+refresh();
+const timer = setInterval(async () => {
+  const jobs = await (await fetch('/api/jobs')).json();
+  const active = jobs.some(j => j.status==='queued' || j.status==='processing');
+  if (active) refresh();           // 有活动任务时整体刷新
+}, 2000);
+</script>
+</body>
+</html>

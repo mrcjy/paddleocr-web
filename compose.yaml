@@ -1,0 +1,18 @@
+services:
+  ocr:
+    build: ./backend
+    container_name: paddleocr-web
+    restart: unless-stopped
+    ports:
+      - "8010:8000"
+    environment:
+      - OCR_WORKERS=1            # 推理线程数，CPU 建议按核心数 1~2
+    volumes:
+      - ./data/models:/root/.paddleocr   # 缓存下载的模型，避免重复下载
+      - ./data/jobs:/app/data            # 任务结果持久化
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
