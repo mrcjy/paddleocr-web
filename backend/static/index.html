@@ -50,6 +50,15 @@
         padding: 12px; font-size: 14px; line-height: 1.6; max-height: 340px; overflow: auto; }
   body.dark pre { background: #121417; }
   .copy { margin-top: 8px; }
+  .modal { position: fixed; inset: 0; background: rgba(0,0,0,.45); display: none;
+           align-items: center; justify-content: center; z-index: 9; padding: 20px; }
+  .modal.show { display: flex; }
+  .modal .box { background: #fff; border-radius: 14px; padding: 22px; max-width: 360px; width: 100%; }
+  body.dark .modal .box { background: #1c1f24; }
+  .modal h3 { margin: 0 0 4px; font-size: 16px; }
+  .modal .fname { color: #888; font-size: 12.5px; margin-bottom: 14px; word-break: break-all; }
+  .modal .btn { width: 100%; margin-top: 10px; }
+  .modes { display: flex; flex-direction: column; gap: 4px; }
 </style>
 </head>
 <body>
@@ -71,13 +80,42 @@
   </div>
   <div id="jobs"></div>
 </main>
+<div class="modal" id="modal">
+  <div class="box">
+    <h3>选择输出方式</h3>
+    <div class="fname" id="mName"></div>
+    <div class="modes">
+      <button class="btn" onclick="start('text')">📝 转文字 —— 提取可复制文本</button>
+      <button class="btn" onclick="start('doc')">📄 转文档 —— 生成可搜索 PDF</button>
+    </div>
+    <button class="btn ghost" onclick="cancelPick()">取消</button>
+  </div>
+</div>
 <script>
 const $ = s => document.querySelector(s);
 const fmt = t => new Date((t||0)*1000).toLocaleString();
 const label = {queued:'排队中', processing:'识别中', done:'完成', error:'失败'};
 const pick = cam => (cam ? $('#camera') : $('#file')).click();
-$('#file').onchange = e => send(e.target.files[0]);
-$('#camera').onchange = e => send(e.target.files[0]);
+$('#file').onchange = e => choose(e.target.files[0]);
+$('#camera').onchange = e => choose(e.target.files[0]);
+let pendingFile = null;
+
+function choose(file) {
+  if (!file) return;
+  pendingFile = file;
+  $('#mName').textContent = file.name;
+  $('#modal').classList.add('show');
+}
+function start(mode) {
+  $('#modal').classList.remove('show');
+  if (pendingFile) send(pendingFile, mode);
+  pendingFile = null;
+}
+function cancelPick() {
+  $('#modal').classList.remove('show');
+  $('#file').value = ''; $('#camera').value = '';
+  pendingFile = null;
+}
 
 const drop = $('#drop');
 ['dragover','dragenter'].forEach(ev => drop.addEventListener(ev, e => {
@@ -88,11 +126,12 @@ const drop = $('#drop');
 }));
 drop.addEventListener('drop', e => send(e.dataTransfer.files[0]));
 
-async function send(file) {
+async function send(file, mode = 'text') {
   if (!file) return;
   $('#dropText').textContent = '上传中: ' + file.name;
   const fd = new FormData();
   fd.append('file', file);
+  fd.append('mode', mode);
   try {
     await fetch('/api/upload', {method:'POST', body: fd});
     refresh();
@@ -120,7 +159,10 @@ async function refresh() {
     const thumb = j.has_image ? `<img class="thumb" src="/api/image/${j.id}" onclick="window.open(this.src)" alt="">` : '';
     const result = j.status==='done' ? `
         <pre id="t-${j.id}">${esc(j.text ?? '')}</pre>
-        <button class="btn ghost copy" onclick="copyTxt('${j.id}')">复制文本</button>` : '';
+        <div class="btns" style="justify-content:flex-start">
+          <button class="btn ghost copy" onclick="copyTxt('${j.id}')">复制文本</button>
+          ${j.mode==='doc' ? `<a class="btn" style="text-decoration:none" href="/api/job/${j.id}/pdf">下载 PDF</a>` : ''}
+        </div>` : '';
     return `
     <div class="card" data-id="${j.id}">
       <h3>${esc(j.name)} <span class="badge ${j.status}">${label[j.status]}</span></h3>
